@@ -270,6 +270,22 @@ static void unlayer_stream(AVStream *st, LayeredAVStream *lst)
     COPY(recommended_encoder_configuration)
 }
 
+/* NULLify all shared state that was applied in unlayer_stream. */
+static void detach_unlayered_stream(AVStream *st)
+{
+    st->codec = 0;
+    st->codecpar = 0;
+    st->recommended_encoder_configuration = 0;
+}
+
+static void close_unlayered_format_context(AVFormatContext *ctx)
+{
+    int i = 0;
+    for (i = 0; i < ctx->nb_streams; ++i)
+        detach_unlayered_stream(ctx->streams[i]);
+    avformat_free_context(ctx);
+}
+
 static inline void cp_html_entity (char *buffer, const char *entity) {
     if (!buffer || !entity)
         return;
@@ -936,9 +952,7 @@ static void close_connection(HTTPContext *c)
         ctx = c->rtp_ctx[i];
         if (ctx) {
             av_write_trailer(ctx);
-            av_dict_free(&ctx->metadata);
-            av_freep(&ctx->streams[0]);
-            av_freep(&ctx);
+            avformat_free_context(ctx);
         }
         ffurl_close(c->rtp_handles[i]);
     }
@@ -954,11 +968,9 @@ static void close_connection(HTTPContext *c)
                 avio_close_dyn_buf(ctx->pb, &c->pb_buffer);
             }
         }
-        for(i=0; i<ctx->nb_streams; i++)
-            av_freep(&ctx->streams[i]);
-        av_freep(&ctx->streams);
-        av_freep(&ctx->priv_data);
-        }
+        close_unlayered_format_context(ctx);
+        c->pfmt_ctx = 0;
+    }
 
     if (c->stream && !c->post && c->stream->stream_type == STREAM_TYPE_LIVE)
         current_bandwidth -= c->stream->bandwidth;
@@ -3836,7 +3848,7 @@ drop:
             }
             s->oformat = feed->fmt;
             for (i = 0; i<feed->nb_streams; i++) {
-                AVStream *st = avformat_new_stream(s, NULL); // FIXME free this
+                AVStream *st = avformat_new_stream(s, NULL);
                 if (!st) {
                     http_log("Failed to allocate stream\n");
                     goto bail;
@@ -3846,17 +3858,11 @@ drop:
             if (avformat_write_header(s, NULL) < 0) {
                 http_log("Container doesn't support the required parameters\n");
                 avio_closep(&s->pb);
-                s->streams = NULL;
-                s->nb_streams = 0;
-                avformat_free_context(s);
+                close_unlayered_format_context(s);
                 goto bail;
             }
-            /* XXX: need better API */
-            av_freep(&s->priv_data);
             avio_closep(&s->pb);
-            s->streams = NULL;
-            s->nb_streams = 0;
-            avformat_free_context(s);
+            close_unlayered_format_context(s);
         }
 
         /* get feed size and write index */
