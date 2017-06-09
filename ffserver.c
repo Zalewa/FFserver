@@ -960,7 +960,7 @@ static void close_connection(HTTPContext *c)
     ctx = c->pfmt_ctx;
 
     if (ctx) {
-        if (!c->last_packet_sent && c->state == HTTPSTATE_SEND_DATA_TRAILER) {
+        if (!c->last_packet_sent) {
             /* prepare header */
             if (ctx->oformat && avio_open_dyn_buf(&ctx->pb) >= 0) {
                 av_write_trailer(ctx);
